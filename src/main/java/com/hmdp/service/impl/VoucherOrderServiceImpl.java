@@ -1,6 +1,5 @@
 package com.hmdp.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.SeckillVoucher;
@@ -9,8 +8,8 @@ import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
-import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -56,16 +55,29 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail("库存不足");
         }
         Long userId = UserHolder.getUser().getId();
-        //toString().intern()返回的是常量池的对象，值相同就相同，所以可以锁住同一userid
-        synchronized (userId.toString().intern()) {
-            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
-            //如果用this直接调用createVoucherOrder的话，没有事务特征，
-            //因为aop是spring用代理实现的，
-            //所以要拿到它的代理对象->来调用该函数，才有事务特征
-            //还需要引入依赖，aspectjweaver，
-            //以及暴露@EnableAspectJAutoProxy(exposeProxy = true)代理对象
-            return proxy.createVoucherOrder(voucherId);
+        //redis分布式锁
+        SimpleRedisLock lock = new SimpleRedisLock(redisTemplate, "order" + userId);
+        if (!lock.tryLock(1200L)) {
+            return Result.fail("你已经下单过一次");
         }
+        //事务异常，直接释放锁
+        try {
+            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
+            return proxy.createVoucherOrder(voucherId);
+        } finally {
+            lock.unlock();
+        }
+        //toString().intern()返回的是常量池的对象，值相同就相同，所以可以锁住同一userid
+        //但是在分布式系统下，不同服务器有不同的jvm内存，即不同锁监视器，所以该方式不能实现分布式锁
+//        synchronized (userId.toString().intern()) {
+//            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
+//            //如果用this直接调用createVoucherOrder的话，没有事务特征，
+//            //因为aop是spring用代理实现的，
+//            //所以要拿到它的代理对象->来调用该函数，才有事务特征
+//            //还需要引入依赖，aspectjweaver，
+//            //以及暴露@EnableAspectJAutoProxy(exposeProxy = true)代理对象
+//            return proxy.createVoucherOrder(voucherId);
+//        }
         //如果该方法加事务，会超卖的原因:
         //只有该方法执行到最下面的大括号才会结束，但此时锁已经释放，
         //很可能有同一userId再次获得锁，而事务还没提交，数据库中的count还是0，所以发生超卖
@@ -81,7 +93,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
         if (count > 0) {
             return Result.fail("您已经下过单了");
-
         }
         //乐观锁-CAS实现，判断stock没变也可以，但是不如 > 0
         boolean success = seckillVoucherService.update().setSql("stock = stock - 1")
@@ -92,7 +103,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
         //库存充足，创建订单,
         long orderId = idWorker.nextId("order");
-
         VoucherOrder voucherOrder = new VoucherOrder();
         voucherOrder.setVoucherId(voucherId);
         voucherOrder.setId(idWorker.nextId("order"));
