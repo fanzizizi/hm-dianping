@@ -1,7 +1,9 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
@@ -9,13 +11,23 @@ import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.CacheClient;
 import com.hmdp.utils.RedisData;
+import com.hmdp.utils.SystemConstants;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.geo.Circle;
+import org.springframework.data.geo.Distance;
+import org.springframework.data.geo.GeoResult;
+import org.springframework.data.geo.GeoResults;
+import org.springframework.data.redis.connection.RedisGeoCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.domain.geo.GeoReference;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -135,6 +147,46 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         //2.删除redis缓存
         redisTemplate.delete(CACHE_SHOP_KEY + shop.getId());
         return Result.ok();
+    }
+
+    @Override
+    public Result queryShopByType(Integer typeId, Integer current, Double x, Double y) {
+        if (x == null || y == null) {
+            Page<Shop> page = this.query()
+                    .eq("type_id", typeId)
+                    .page(new Page<>(current, SystemConstants.DEFAULT_PAGE_SIZE));
+            return Result.ok(page.getRecords());
+        }
+        int from = (current - 1) * SystemConstants.DEFAULT_PAGE_SIZE;
+        int end = current * SystemConstants.DEFAULT_PAGE_SIZE;
+
+        String key = "shop:geo:" + typeId;
+        GeoResults<RedisGeoCommands.GeoLocation<String>> results = redisTemplate.opsForGeo().search(key,
+                GeoReference.fromCoordinate(x, y),
+                new Distance(5000),
+                RedisGeoCommands.GeoSearchCommandArgs.newGeoSearchArgs()
+                        .includeDistance()//等价于WITHDISTANCE
+                        .limit(end));//等价于查询end个记录(从0开始)
+        if (results == null || results.getContent().isEmpty()) return Result.ok("没有下一页");
+
+        List<GeoResult<RedisGeoCommands.GeoLocation<String>>> content = results.getContent();
+        if (content.size() <= from) return Result.ok();
+        //从0到end个记录，截取其中的 form 到 end；
+        ArrayList<Long> ids = new ArrayList<>(content.size());
+        HashMap<String, Distance> distanceMap = new HashMap<>(content.size());
+        content.stream().skip(from).forEach(result -> {
+            //店铺id和距离
+            String shopId = result.getContent().getName();
+            ids.add(Long.valueOf(shopId));
+            Distance distance = result.getDistance();
+            distanceMap.put(shopId, distance);
+        });
+        String idStr = StrUtil.join(",", ids);
+        List<Shop> shops = this.query().in("id", ids).last("order by field(id," + idStr + ")").list();
+        shops.forEach(shop -> {
+            shop.setDistance(distanceMap.get(shop.getId().toString()).getValue());
+        });
+        return Result.ok(shops);
     }
 
     //版本1：只解决了缓冲穿透的问题,使用封装工具类实现

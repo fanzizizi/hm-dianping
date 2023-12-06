@@ -74,8 +74,12 @@ public class ShopController {
     @GetMapping("/of/type")
     public Result queryShopByType(
             @RequestParam("typeId") Integer typeId,
-            @RequestParam(value = "current", defaultValue = "1") Integer current
-    ) {
+            @RequestParam(value = "current", defaultValue = "1") Integer current,
+            @RequestParam(value = "x", required = false) Double x,
+            @RequestParam(value = "y", required = false) Double y) {
+        if (x != null && y != null) {
+            return shopService.queryShopByType(typeId, current, x, y);
+        }
         // 根据类型分页查询
         Page<Shop> page = shopService.query()
                 .eq("type_id", typeId)

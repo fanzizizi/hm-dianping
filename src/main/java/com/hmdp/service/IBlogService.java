@@ -6,7 +6,7 @@ import com.baomidou.mybatisplus.extension.service.IService;
 
 /**
  * <p>
- *  服务类
+ * 服务类
  * </p>
  *
  * @author 虎哥
@@ -21,4 +21,8 @@ public interface IBlogService extends IService<Blog> {
     Result likeBlog(Long id);
 
     Result queryLikes(Long id);
+
+    Result saveBlog(Blog blog);
+
+    Result queryFollowBlog(Long lastId, Integer offset);
 }
