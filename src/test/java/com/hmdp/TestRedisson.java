@@ -9,9 +9,12 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.geo.Point;
+import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import javax.annotation.Resource;
+import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +76,38 @@ public class TestRedisson {
 //            redisTemplate.opsForGeo().add(key, )
         }
 
+
+    }
+
+    @Test
+    void TestBitMap() {
+        String s = stringRedisTemplate.opsForValue().get("sign:1:202312");
+        byte[] bytes = s.getBytes();
+        for (byte aByte : bytes) {
+            System.out.println(aByte);
+        }
+        LocalDateTime now = LocalDateTime.now();
+        List<Long> longs = stringRedisTemplate.opsForValue().bitField("sign:1:202312",
+                BitFieldSubCommands.create()
+                        .get(BitFieldSubCommands.BitFieldType.unsigned(now.getDayOfMonth())).valueAt(0));
+        longs.forEach(System.out::println);
+
+    }
+
+    @Test
+    void testHll() {
+
+        String[] values = new String[1000];
+        int j = 0;
+        for (int i = 0; i < 1000000; i++) {
+            j = i % 1000;
+            values[j] = "user_" + i;
+            if (j == 999) {
+                stringRedisTemplate.opsForHyperLogLog().add("hhl", values);
+            }
+        }
+        Long hhl = stringRedisTemplate.opsForHyperLogLog().size("hhl");
+        System.out.println(hhl);
     }
 
 }

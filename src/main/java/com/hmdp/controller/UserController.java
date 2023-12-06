@@ -44,6 +44,17 @@ public class UserController {
         return userService.sendCode(phone, session);
     }
 
+    @PostMapping("/sign")
+    public Result sign() {
+        return userService.sign();
+    }
+
+    @GetMapping("/sign/count")
+    public Result signCount() {
+        return userService.signContinuous();
+    }
+
+
     /**
      * 登录功能
      *
@@ -87,7 +98,7 @@ public class UserController {
     }
 
     @GetMapping("/{id}")
-    public Result queryUserById(@PathVariable("id") Long userId){
+    public Result queryUserById(@PathVariable("id") Long userId) {
         // 查询详情
         User user = userService.getById(userId);
         if (user == null) {

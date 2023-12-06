@@ -15,9 +15,12 @@ import com.hmdp.mapper.UserMapper;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RegexUtils;
+import com.hmdp.utils.UserHolder;
+import io.lettuce.core.BitFieldArgs;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -25,8 +28,10 @@ import org.springframework.util.StringUtils;
 
 import javax.servlet.http.HttpSession;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.time.LocalDateTime;
+import java.time.Month;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 import static com.hmdp.utils.SystemConstants.USER_NICK_NAME_PREFIX;
@@ -116,6 +121,59 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         return Result.ok(token);
     }
+
+    //签到功能
+    @Override
+    public Result sign() {
+
+        LocalDateTime date = LocalDateTime.now();
+
+        String keySuffix = date.format(DateTimeFormatter.ofPattern(":yyyyMM"));
+        String key = RedisConstants.USER_SIGN_KEY + UserHolder.getUser().getId() + keySuffix;
+
+        int offset = date.getDayOfMonth() - 1;
+
+        redisTemplate.opsForValue().setBit(key, offset, true);
+        return Result.ok();
+    }
+
+    @Override
+    public Result signContinuous() {
+        //组装key
+        LocalDateTime now = LocalDateTime.now();
+        String keySuffix = now.format(DateTimeFormatter.ofPattern(":yyyyMM"));
+
+        String key = RedisConstants.USER_SIGN_KEY + UserHolder.getUser().getId() + keySuffix;
+        //今天日期
+        int dayOfMonth = now.getDayOfMonth();
+
+        List<Long> res = redisTemplate.opsForValue()
+                .bitField(
+                        key,
+                        BitFieldSubCommands.create()
+                                .get(BitFieldSubCommands.BitFieldType.unsigned(dayOfMonth))
+                                .valueAt(0)
+                );
+        if (res == null || res.isEmpty()) {
+            return Result.ok(0);
+        }
+        //根据res的值，用位运算统计签到天数
+        Long num = res.get(0);
+        if (num == 0) {
+            return Result.ok(0);
+        }
+        int count = 0;
+        while (true) {
+            if ((num & 1) == 0) {
+                break;
+            } else {
+                count++;
+                num >>>= 1;//逻辑右移，高位补0
+            }
+        }
+        return Result.ok(count);
+    }
+
 
     private User createUserWithPhone(String phone) {
         User user = new User();
